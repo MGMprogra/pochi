@@ -1,0 +1,127 @@
+#include <WiFi.h>
+#include <SocketIoClient.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+#define ONBOARD_LED 2
+#define ONE_WIRE_BUS 4
+#define ECG_PIN 34
+#define ECG_THRESHOLD 1900  // Ajusta esto según tu sensor ECG
+
+const char* ssid     = "TecNM-ITT";
+const char* password = "";
+const char* server   = "172.16.66.109";
+const uint16_t port  = 3000;
+
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+SocketIoClient socketIO;
+
+bool medicionActiva = false;
+float temperatura = 0.0;
+uint16_t pulso = 0;
+String ultimoDatoGuardado = "";
+
+uint64_t lastSendTime = 0;
+
+// Variables para BPM
+unsigned long startWindow = 0;
+unsigned int beats = 0;
+uint16_t bpmCalculado = 0;
+bool pulsoDetectado = false;
+
+void setup() {
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Conectando a WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi conectado");
+
+  sensors.begin();
+  pinMode(ECG_PIN, INPUT);
+  pinMode(ONBOARD_LED, OUTPUT);
+  digitalWrite(ONBOARD_LED, LOW);
+
+  socketIO.begin(server, port);
+  socketIO.on("desde_cliente", handleCommand);
+
+  Serial.println("Sistema listo. Esperando comando START.");
+}
+
+void loop() {
+  socketIO.loop();
+
+  if (medicionActiva) {
+    // Leer ECG continuamente
+    if (millis() - lastSendTime > 10) {
+      lastSendTime = millis();
+
+      int ecgRaw = analogRead(ECG_PIN);
+
+      if (ecgRaw > ECG_THRESHOLD && !pulsoDetectado) {
+        pulsoDetectado = true;
+        beats++;
+      }
+
+      if (ecgRaw < ECG_THRESHOLD) {
+        pulsoDetectado = false;
+      }
+
+      // Cada 10 segundos calcula BPM
+      if (millis() - startWindow > 10000) {
+        bpmCalculado = beats * 6;
+        beats = 0;
+        startWindow = millis();
+      }
+
+      pulso = bpmCalculado;
+    }
+
+    // Enviar datos cada 1 segundo
+    static unsigned long lastSendJson = 0;
+    if (millis() - lastSendJson > 1000) {
+      lastSendJson = millis();
+
+      sensors.requestTemperatures();
+      temperatura = sensors.getTempCByIndex(0);
+
+      String mensaje = "{\"temperatura\":" + String(temperatura, 2) + ",\"pulso\":" + String(pulso) + "}";
+      socketIO.emit("retransmision_esp32", mensaje.c_str());
+
+      Serial.println("Enviado: " + mensaje);
+    }
+  }
+
+  delay(10);
+}
+
+void handleCommand(const char * payload, size_t length) {
+  String comando = String(payload);
+  comando.trim();
+  Serial.println("Comando recibido: " + comando);
+
+  if (comando == "START") {
+    medicionActiva = true;
+    digitalWrite(ONBOARD_LED, HIGH);
+    bpmCalculado = 0;
+    beats = 0;
+    pulso = 0;
+    startWindow = millis();
+    Serial.println("Medición iniciada.");
+  } else if (comando == "STOP") {
+    medicionActiva = false;
+    digitalWrite(ONBOARD_LED, LOW);
+    Serial.println("Medición detenida.");
+
+    // (Opcional) Enviar estado al servidor
+    String mensaje = "{\"estado\":\"detenido\"}";
+    socketIO.emit("retransmision_esp32", mensaje.c_str());
+  } else if (comando == "SAVE") {
+    ultimoDatoGuardado = "Temp: " + String(temperatura, 2) + " °C, Pulso: " + String(pulso) + " BPM";
+    Serial.println("Datos guardados: " + ultimoDatoGuardado);
+  }
+}
