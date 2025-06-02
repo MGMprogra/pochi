@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Telecomunicaciones</title>
+    <script type="text/javascript" src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <style>
+        #datos {
+            font-size: 1.2em;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Telecomunicaciones - Monitoreo y Control</h2>
+
+    <div id="datos">
+        <p><strong>Temperatura:</strong> <span id="temp">--</span> °C</p>
+        <p><strong>Distancia:</strong> <span id="dist">--</span> cm</p>
+    </div>
+
+    <div id="div_comando"></div>
+    <div id="div_grafica"></div>
+
+    <br><br>
+
+    <script>
+        const socket = io();
+
+        socket.on("desde_esp32", function(data) {
+            try {
+                const parsed = JSON.parse(data);
+                document.getElementById("temp").innerText = parsed.temperatura.toFixed(2);
+                document.getElementById("dist").innerText = parsed.distancia.toFixed(2);
+            } catch (err) {
+                console.error("Error procesando datos:", data);
+            }
+        });
+
+        socket.on("retransmision_esp32", function(data) {
+    try {
+        const parsed = (typeof data === "string") ? JSON.parse(data) : data;
+
+        document.getElementById("temp").innerText = parsed.temperatura.toFixed(2);
+        document.getElementById("dist").innerText = parsed.distancia.toFixed(2);
+    } catch (err) {
+        console.error("Error procesando datos:", data);
+    }
+});
+    </script>
+</body>
+</html>
